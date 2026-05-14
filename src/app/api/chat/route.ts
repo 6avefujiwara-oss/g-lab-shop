@@ -7,30 +7,50 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 async function checkInventory() {
   console.log("在庫確認ツールが呼び出されました");
 
-  // 環境変数のチェック
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    console.error("Supabase環境変数が不足しています");
-    return "申し訳ありません。現在、在庫データベースの設定が不十分なため確認できません。";
+    return "申し訳ありません。データベースの設定が不十分です。";
   }
 
   try {
-    const { data, error } = await supabase
-      .from('products')
-      .select('*');
-
-    if (error) {
-      console.error("在庫確認エラー:", error);
-      return "在庫情報の取得中にエラーが発生しました。";
-    }
-
-    if (!data || data.length === 0) {
-      return "現在、在庫として登録されている商品はございません。";
-    }
-
+    const { data, error } = await supabase.from('products').select('*');
+    if (error) throw error;
     return JSON.stringify(data);
   } catch (err) {
-    console.error("在庫確認中に例外が発生:", err);
-    return "在庫確認プロセスで予期せぬエラーが発生しました。";
+    console.error("在庫確認エラー:", err);
+    return "在庫情報の取得に失敗しました。";
+  }
+}
+
+// 注文処理ツール
+async function placeOrder(productId: number, quantity: number) {
+  console.log(`注文処理呼び出し: ID=${productId}, 数量=${quantity}`);
+
+  try {
+    // 1. 在庫確認
+    const { data: product, error: fetchError } = await supabase
+      .from('products')
+      .select('stock, name')
+      .eq('id', productId)
+      .single();
+
+    if (fetchError || !product) return "商品の特定に失敗しました。";
+    if (product.stock < quantity) return `在庫不足です（現在庫: ${product.stock}）。`;
+
+    // 2. 在庫減算
+    const { error: updateError } = await supabase
+      .from('products')
+      .update({ stock: product.stock - quantity })
+      .eq('id', productId);
+
+    if (updateError) throw updateError;
+
+    return JSON.stringify({
+      status: "success",
+      message: `${product.name}を${quantity}点、ご注文承りました。ありがとうございます！`
+    });
+  } catch (err) {
+    console.error("注文実行エラー:", err);
+    return "注文処理中に予期せぬエラーが発生しました。";
   }
 }
 
@@ -39,23 +59,48 @@ const storeTools = [
     functionDeclarations: [
       {
         name: "checkInventory",
-        description: "ショップ「G-LAB」の最新の在庫状況（商品名、価格、在庫数）を取得します。お客様から商品や在庫について聞かれた際は、必ずこのツールを使用して最新情報を確認してください。",
+        description: "ショップの全商品の最新在庫状況（ID、商品名、価格、在庫数）を取得します。",
       },
+      {
+        name: "placeOrder",
+        description: "指定されたIDの商品を注文（購入確定）します。在庫を実際に減らします。必ず注文の最終確認後に行ってください。",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            productId: { type: "NUMBER", description: "注文する商品のID" },
+            quantity: { type: "NUMBER", description: "注文個数" }
+          },
+          required: ["productId", "quantity"]
+        }
+      }
     ],
   },
 ];
 
 const SYSTEM_PROMPT = `
-あなたは、京都にある日本文化とAIアートを融合させたショップ「G-LAB」の優秀なバイリンガル・コンシェルジュです。
-以下のルールに従って、丁寧な接客を行ってください。
+あなたは、京都のショップ「G-LAB」の優秀なコンシェルジュです。
+お客様の意図を汲み取り、正確な「金額計算」と「丁寧な確認」を行ってください。
 
-1. 【言語対応】 相手が英語で話しかけてきたら流暢な英語で、日本語なら日本語で自然に返答してください。
-2. 【観光案内】 京都の観光 (特に禅寺や浮世絵などの伝統文化)について聞かれたら、深い知識をもっておもてなしの心で案内してください。
-3. 【ショップ店員】 G-LABの主力商品である「猫侍 (Neko Samurai) の Tシャツ」や「日の丸キャップ（Hinomaru Cap)」などに自然な流れで興味を持ってもらい、提案してください。
-4. 【在庫確認】 商品や在庫に関する質問には、必ず「checkInventory」ツールを使用して答えてください。
-5. 【誠実な対応】 注文の最終決定前には、必ずお客様に「こちらで確定してよろしいでしょうか?」と確認を行ってください。
-6. 【ショップ店員】最後は『京都の風情を大切に。AI屋 G-LAB 店主より』という一言だけで締めくくってください。過度な宣伝は不要です。
+【スマート接客ガイドライン】
+1. 曖昧さの解消と検索: 
+   「キャップ」「Tシャツ」などと言及されたら、即座に「checkInventory」を実行して特定してください。
 
+2. 金額の計算と提示（重要）:
+   購入の意思を確認する際は、必ず以下の情報を分かりやすく提示してください。
+   - 商品の正式名称
+   - 単価（1点あたりの価格）
+   - ご希望の数量
+   - 合計金額（単価 × 数量）
+   例：「『日の丸キャップ』は1点 2,500円でございます。3点ですと合計で 7,500円となりますが、こちらで確定してよろしいでしょうか？」
+
+3. 接客フロー:
+   - ステップ1: 「checkInventory」でID、名称、価格、在庫を確認。
+   - ステップ2: 上記の「金額計算」を含めた最終確認を行う。
+   - ステップ3: お客様から「はい」「お願いします」「それで確定してください」「もちろん」「いいですよ」といった、購入を承諾する肯定的な言葉が得られたら、即座に「placeOrder」を実行する。
+
+4. キャラクター:
+   - 常に丁寧で「おもてなし」の心を忘れない。
+   - 最後は必ず『京都の風情を大切に。AI屋 G-LAB 店主より』で締める。
 `;
 
 export async function POST(req: Request) {
@@ -72,7 +117,6 @@ export async function POST(req: Request) {
     let result = await chat.sendMessage(message);
     let response = result.response;
 
-    // ツール呼び出しのループ処理（最大5回まで）
     let callCount = 0;
     while (response.functionCalls()?.length > 0 && callCount < 5) {
       callCount++;
@@ -81,13 +125,12 @@ export async function POST(req: Request) {
 
       for (const call of calls) {
         if (call.name === "checkInventory") {
-          const inventoryData = await checkInventory();
-          functionResponses.push({
-            functionResponse: {
-              name: "checkInventory",
-              response: { content: inventoryData }
-            }
-          });
+          const data = await checkInventory();
+          functionResponses.push({ functionResponse: { name: "checkInventory", response: { content: data } } });
+        } else if (call.name === "placeOrder") {
+          const { productId, quantity } = call.args as { productId: number; quantity: number };
+          const data = await placeOrder(productId, quantity);
+          functionResponses.push({ functionResponse: { name: "placeOrder", response: { content: data } } });
         }
       }
 
@@ -99,22 +142,17 @@ export async function POST(req: Request) {
       }
     }
 
-    // テキストレスポンスを取得（存在しない場合はフォールバック）
     let text = "";
     try {
       text = response.text();
     } catch (e) {
-      console.warn("テキスト取得エラー:", e);
-      text = "申し訳ございません。情報の処理中に問題が発生しました。もう一度お聞きいただけますか？";
+      text = "申し訳ございません。処理を完了できませんでした。もう一度お願いします。";
     }
 
     return Response.json({ reply: text });
 
   } catch (error) {
     console.error('APIエラー:', error);
-    return Response.json(
-      { error: "申し訳ございません。現在AI店主が席を外しております。少々お待ちくださいませ。" },
-      { status: 500 }
-    );
+    return Response.json({ error: "現在AI店主が席を外しております。" }, { status: 500 });
   }
 }
