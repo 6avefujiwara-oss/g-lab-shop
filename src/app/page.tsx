@@ -49,6 +49,9 @@ export default function Storefront() {
         <div className="bg-stone-800 text-white p-5 text-center">
           <h1 className="text-3xl font-bold tracking-widest mb-1">G-LAB</h1>
           <p className="text-sm text-stone-300">伝統文化とAIの融合 - コンシェルジュ・サービス</p>
+          <p className="text-base text-stone-300 mt-1">
+             Providing tourist guidance and local rules in both Japanese and English.
+         </p>
         </div>
 
         {/* チャット履歴表示エリア */}
