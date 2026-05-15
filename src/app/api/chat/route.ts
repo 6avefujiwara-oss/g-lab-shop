@@ -111,25 +111,37 @@ const SYSTEM_PROMPT = `
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { message } = body;
+    const { message, history } = body;
 
     const model = genAI.getGenerativeModel({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-flash-latest',
         systemInstruction: SYSTEM_PROMPT,
         tools: storeTools
     });
 
-    const chat = model.startChat();
+    // 履歴のロールをGeminiの形式（assistant -> model）に変換
+    const geminiHistory = (history || []).map((msg: any) => ({
+      role: msg.role === 'assistant' ? 'model' : msg.role,
+      parts: [{ text: msg.content }]
+    }));
+
+    console.log("チャットセッションを開始します（履歴あり）:", message);
+    const chat = model.startChat({
+      history: geminiHistory,
+    });
     let result = await chat.sendMessage(message);
     let response = result.response;
 
     let callCount = 0;
     let calls = response.functionCalls();
+    console.log("初期レスポンスの関数呼び出し:", calls ? calls.length : 0);
+
     while (calls && calls.length > 0 && callCount < 5) {
       callCount++;
       const functionResponses = [];
 
       for (const call of calls) {
+        console.log(`関数実行中: ${call.name}`, call.args);
         if (call.name === "checkInventory") {
           const data = await checkInventory();
           functionResponses.push({ functionResponse: { name: "checkInventory", response: { content: data } } });
@@ -141,9 +153,14 @@ export async function POST(req: Request) {
       }
 
       if (functionResponses.length > 0) {
+        console.log(`AIにツール結果を送信します (回数: ${callCount}) - レート制限回避のため待機中...`);
+        // 無料枠の制限を回避するための待機時間を延長
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
         result = await chat.sendMessage(functionResponses);
         response = result.response;
         calls = response.functionCalls();
+        console.log("次ターンの関数呼び出し:", calls ? calls.length : 0);
       } else {
         break;
       }
@@ -152,6 +169,7 @@ export async function POST(req: Request) {
     let text = "";
     try {
       text = response.text();
+      console.log("最終テキスト応答を取得しました");
     } catch (e) {
       console.warn("Text generation failed or blocked:", e);
       text = "申し訳ございません。現在うまくお答えすることができません。別の言い方でお試しいただけますか？";
@@ -162,12 +180,13 @@ export async function POST(req: Request) {
   } catch (error: any) {
     if (error.status === 429) {
       console.error('クォータ制限エラー:', error);
+      // 詳細なエラー理由をフロントエンドに返す
       return Response.json({ 
-        error: "申し訳ございません。現在、大変多くのお客様からお問い合わせをいただいております。しばらく時間を置いてから再度お声がけください。" 
+        error: `APIの利用制限が発生しました(429)。理由: ${error.message || "リクエスト過多です。しばらくお待ちください。"}` 
       }, { status: 429 });
     }
     
     console.error('APIエラー:', error);
-    return Response.json({ error: "現在AI店主が席を外しております。恐れ入りますが、しばらくしてからもう一度お試しください。" }, { status: 500 });
+    return Response.json({ error: `APIエラーが発生しました(500): ${error.message}` }, { status: 500 });
   }
 }

@@ -26,16 +26,22 @@ export default function Storefront() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: input }),
+        body: JSON.stringify({ 
+          message: input,
+          history: messages 
+        }),
       });
 
-      if (!res.ok) throw new Error("APIレスポンスエラー");
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "APIレスポンスエラー");
+      }
 
       const data = await res.json();
       setMessages([...newMessages, { role: "assistant", content: data.reply || data.error }]);
-    } catch (error) {
+    } catch (error: any) {
       console.error("通信エラー:", error);
-      setMessages([...newMessages, { role: "assistant", content: "申し訳ございません。通信中にエラーが発生しました。時間を置いて再度お試しください。" }]);
+      setMessages([...newMessages, { role: "assistant", content: `申し訳ございません。エラーが発生しました: ${error.message}` }]);
     } finally {
       setIsLoading(false);
     }
