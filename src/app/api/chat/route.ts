@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, SchemaType, Tool } from '@google/generative-ai';
 import { supabase } from '@/lib/supabase';
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
@@ -54,7 +54,7 @@ async function placeOrder(productId: number, quantity: number) {
   }
 }
 
-const storeTools = [
+const storeTools: Tool[] = [
   {
     functionDeclarations: [
       {
@@ -65,10 +65,10 @@ const storeTools = [
         name: "placeOrder",
         description: "指定されたIDの商品を注文（購入確定）します。在庫を実際に減らします。必ず注文の最終確認後に行ってください。",
         parameters: {
-          type: "OBJECT",
+          type: SchemaType.OBJECT,
           properties: {
-            productId: { type: "NUMBER", description: "注文する商品のID" },
-            quantity: { type: "NUMBER", description: "注文個数" }
+            productId: { type: SchemaType.NUMBER, description: "注文する商品のID" },
+            quantity: { type: SchemaType.NUMBER, description: "注文個数" }
           },
           required: ["productId", "quantity"]
         }
@@ -81,9 +81,14 @@ const SYSTEM_PROMPT = `
 あなたは、京都のショップ「G-LAB」の優秀なコンシェルジュです。
 お客様の意図を汲み取り、正確な「金額計算」と「丁寧な確認」を行ってください。
 
+【ツール利用の厳格な指針】
+1. 観光案内や一般的な挨拶、雑談の際には、絶対に「checkInventory」や「placeOrder」を呼び出さないでください。
+2. お客様が具体的な商品（「キャップ」「Tシャツ」「グッズ」など）について尋ねた場合や、購入を希望された場合にのみ「checkInventory」を実行してください。
+3. 無関係な文脈（例：葵祭の解説、道案内など）でツールを呼び出すことは禁止です。
+
 【スマート接客ガイドライン】
 1. 曖昧さの解消と検索: 
-   「キャップ」「Tシャツ」などと言及されたら、即座に「checkInventory」を実行して特定してください。
+   商品に関連する言及があったら、即座に「checkInventory」を実行して特定してください。
 
 2. 金額の計算と提示（重要）:
    購入の意思を確認する際は、必ず以下の情報を分かりやすく提示してください。
@@ -94,9 +99,9 @@ const SYSTEM_PROMPT = `
    例：「『日の丸キャップ』は1点 2,500円でございます。3点ですと合計で 7,500円となりますが、こちらで確定してよろしいでしょうか？」
 
 3. 接客フロー:
-   - ステップ1: 「checkInventory」でID、名称、価格、在庫を確認。
+   - ステップ1: 商品の問い合わせ時に「checkInventory」でID、名称、価格、在庫を確認。
    - ステップ2: 上記の「金額計算」を含めた最終確認を行う。
-   - ステップ3: お客様から「はい」「お願いします」「それで確定してください」「もちろん」「いいですよ」といった、購入を承諾する肯定的な言葉が得られたら、即座に「placeOrder」を実行する。
+   - ステップ3: お客様から承諾が得られたら「placeOrder」を実行する。
 
 4. キャラクター:
    - 常に丁寧で「おもてなし」の心を忘れない。
@@ -105,7 +110,8 @@ const SYSTEM_PROMPT = `
 
 export async function POST(req: Request) {
   try {
-    const { message } = await req.json();
+    const body = await req.json();
+    const { message } = body;
 
     const model = genAI.getGenerativeModel({
         model: 'gemini-2.5-flash',
@@ -118,9 +124,9 @@ export async function POST(req: Request) {
     let response = result.response;
 
     let callCount = 0;
-    while (response.functionCalls()?.length > 0 && callCount < 5) {
+    let calls = response.functionCalls();
+    while (calls && calls.length > 0 && callCount < 5) {
       callCount++;
-      const calls = response.functionCalls();
       const functionResponses = [];
 
       for (const call of calls) {
@@ -137,6 +143,7 @@ export async function POST(req: Request) {
       if (functionResponses.length > 0) {
         result = await chat.sendMessage(functionResponses);
         response = result.response;
+        calls = response.functionCalls();
       } else {
         break;
       }
@@ -146,13 +153,21 @@ export async function POST(req: Request) {
     try {
       text = response.text();
     } catch (e) {
-      text = "申し訳ございません。処理を完了できませんでした。もう一度お願いします。";
+      console.warn("Text generation failed or blocked:", e);
+      text = "申し訳ございません。現在うまくお答えすることができません。別の言い方でお試しいただけますか？";
     }
 
     return Response.json({ reply: text });
 
-  } catch (error) {
+  } catch (error: any) {
+    if (error.status === 429) {
+      console.error('クォータ制限エラー:', error);
+      return Response.json({ 
+        error: "申し訳ございません。現在、大変多くのお客様からお問い合わせをいただいております。しばらく時間を置いてから再度お声がけください。" 
+      }, { status: 429 });
+    }
+    
     console.error('APIエラー:', error);
-    return Response.json({ error: "現在AI店主が席を外しております。" }, { status: 500 });
+    return Response.json({ error: "現在AI店主が席を外しております。恐れ入りますが、しばらくしてからもう一度お試しください。" }, { status: 500 });
   }
 }
