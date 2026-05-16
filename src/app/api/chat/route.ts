@@ -14,7 +14,8 @@ async function checkInventory() {
   try {
     const { data, error } = await supabase.from('products').select('*');
     if (error) throw error;
-    return JSON.stringify(data);
+    // オブジェクトのまま返す（JSON文字列化しない）
+    return data;
   } catch (err) {
     console.error("在庫確認エラー:", err);
     return "在庫情報の取得に失敗しました。";
@@ -44,10 +45,11 @@ async function placeOrder(productId: number, quantity: number) {
 
     if (updateError) throw updateError;
 
-    return JSON.stringify({
+    // オブジェクトのまま返す（JSON文字列化しない）
+    return {
       status: "success",
       message: `${product.name}を${quantity}点、ご注文承りました。ありがとうございます！`
-    });
+    };
   } catch (err) {
     console.error("注文実行エラー:", err);
     return "注文処理中に予期せぬエラーが発生しました。";
@@ -60,6 +62,11 @@ const storeTools: Tool[] = [
       {
         name: "checkInventory",
         description: "ショップの全商品の最新在庫状況（ID、商品名、価格、在庫数）を取得します。",
+        // 引数なしでも parameters の定義が必須（未定義だとGeminiが関数を呼び出さない）
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {},
+        },
       },
       {
         name: "placeOrder",
@@ -144,11 +151,12 @@ export async function POST(req: Request) {
         console.log(`関数実行中: ${call.name}`, call.args);
         if (call.name === "checkInventory") {
           const data = await checkInventory();
-          functionResponses.push({ functionResponse: { name: "checkInventory", response: { content: data } } });
+          // response にはパース済みオブジェクトを渡す（文字列はNG）
+          functionResponses.push({ functionResponse: { name: "checkInventory", response: { products: data } } });
         } else if (call.name === "placeOrder") {
           const { productId, quantity } = call.args as { productId: number; quantity: number };
           const data = await placeOrder(productId, quantity);
-          functionResponses.push({ functionResponse: { name: "placeOrder", response: { content: data } } });
+          functionResponses.push({ functionResponse: { name: "placeOrder", response: { result: data } } });
         }
       }
 
