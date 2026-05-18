@@ -24,6 +24,13 @@ export default function AdminConsole() {
   const [stockEdits, setStockEdits] = useState<{ [key: number]: number }>({});
   const [successMessage, setSuccessMessage] = useState<string>("");
 
+  // 新商品登録用のステート
+  const [showAddForm, setShowAddForm] = useState<boolean>(false);
+  const [newProductName, setNewProductName] = useState<string>("");
+  const [newProductPrice, setNewProductPrice] = useState<number | "">("");
+  const [newProductStock, setNewProductStock] = useState<number | "">("");
+  const [isRegistering, setIsRegistering] = useState<boolean>(false);
+
   // 1. 起動時およびセッション確認
   useEffect(() => {
     const isAuth = sessionStorage.getItem("admin_auth");
@@ -130,6 +137,53 @@ export default function AdminConsole() {
     }
   };
 
+  // 8. 新商品のデータベース登録
+  const handleRegisterProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProductName.trim() || newProductPrice === "" || newProductStock === "") {
+      alert("すべての項目を正しく入力してください。");
+      return;
+    }
+
+    setIsRegistering(true);
+    try {
+      const { data, error } = await supabase
+        .from("products")
+        .insert([
+          {
+            name: newProductName,
+            price: Number(newProductPrice),
+            stock: Number(newProductStock),
+          },
+        ])
+        .select();
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const registered = data[0] as Product;
+        // リストに追加
+        setProducts((prev) => [...prev, registered]);
+        setStockEdits((prev) => ({ ...prev, [registered.id]: registered.stock }));
+
+        // フォームをリセット
+        setNewProductName("");
+        setNewProductPrice("");
+        setNewProductStock("");
+        setShowAddForm(false); // フォームを閉じる
+
+        // 成功通知を表示
+        setSuccessMessage(`新商品『${registered.name}』を正常に登録しました！`);
+        setTimeout(() => setSuccessMessage(""), 4000);
+      }
+    } catch (err) {
+      console.error("新商品登録エラー:", err);
+      alert("新商品の登録に失敗しました。");
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
   // === ロック（ログイン）画面 ===
   if (!isAuthenticated) {
     return (
@@ -190,7 +244,7 @@ export default function AdminConsole() {
 
       <div className="max-w-4xl mx-auto">
         {/* ヘッダー */}
-        <div className="flex flex-col md:flex-row justify-between items-center mb-10 pb-6 border-b border-stone-200 gap-4">
+        <div className="flex flex-col md:flex-row justify-between items-center mb-8 pb-6 border-b border-stone-200 gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1 justify-center md:justify-start">
               <span className="text-xl">⚙️</span>
@@ -199,7 +253,7 @@ export default function AdminConsole() {
               </h1>
             </div>
             <p className="text-stone-600 text-sm text-center md:text-left">
-              商品の在庫補充および価格・情報の確認を行う店主用画面です。
+              商品の在庫補充、および新規商品の登録を行う店主用画面です。
             </p>
           </div>
           <div className="flex gap-3">
@@ -213,7 +267,7 @@ export default function AdminConsole() {
               onClick={handleLogout}
               className="bg-stone-200 hover:bg-stone-300 text-stone-700 font-bold px-4 py-2 rounded-lg transition-colors text-sm"
             >
-              🔒 閉じる（ログアウト）
+              🔒 ログアウト
             </button>
           </div>
         </div>
@@ -225,114 +279,201 @@ export default function AdminConsole() {
             <p className="text-stone-500 text-sm">台帳を読み込んでいます...</p>
           </div>
         ) : (
-          <>
-            {/* 商品棚の一覧 */}
-            <div className="grid grid-cols-1 gap-6">
-              {products.map((product) => {
-                const currentEdit =
-                  stockEdits[product.id] !== undefined
-                    ? stockEdits[product.id]
-                    : product.stock;
-                const isModified = currentEdit !== product.stock;
+          <div className="space-y-6">
+            
+            {/* 新商品登録セクション (アコーディオン式) */}
+            <div className="bg-white rounded-xl shadow-sm border border-stone-200 overflow-hidden">
+              <button
+                onClick={() => setShowAddForm(!showAddForm)}
+                className="w-full px-6 py-4 flex justify-between items-center bg-stone-100/50 hover:bg-stone-100 transition-colors font-bold text-stone-800 text-lg border-b border-stone-200/60"
+              >
+                <span className="flex items-center gap-2">
+                  ✨ {showAddForm ? "登録フォームを閉じる" : "新しい商品を棚に追加する"}
+                </span>
+                <span className="text-xl text-stone-500">{showAddForm ? "▲" : "▼"}</span>
+              </button>
 
-                return (
-                  <div
-                    key={product.id}
-                    className="bg-white p-6 rounded-xl shadow-sm border border-stone-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 transition-all hover:shadow-md"
-                  >
-                    {/* 商品情報 */}
-                    <div className="space-y-1">
-                      <span className="text-xs text-stone-400 font-bold tracking-wider uppercase">
-                        商品ID: #{product.id}
-                      </span>
-                      <h2 className="text-2xl font-bold text-stone-800">
-                        {product.name}
-                      </h2>
-                      <div className="flex items-center gap-4 text-stone-600 mt-2">
-                        <span className="text-lg font-bold">¥{product.price.toLocaleString()}</span>
-                        <span className="text-xs bg-stone-100 px-2.5 py-1 rounded text-stone-500 font-bold">
-                          現在の在庫: {product.stock} 点
-                        </span>
-                      </div>
+              {showAddForm && (
+                <form onSubmit={handleRegisterProduct} className="p-6 space-y-4 animate-in fade-in duration-200">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* 商品名 */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-bold text-stone-500">商品名</label>
+                      <input
+                        type="text"
+                        placeholder="例：京扇子 桜"
+                        value={newProductName}
+                        onChange={(e) => setNewProductName(e.target.value)}
+                        required
+                        className="border border-stone-300 rounded-lg px-3 py-2 text-stone-800 bg-white focus:outline-none focus:border-stone-500 text-sm"
+                      />
                     </div>
 
-                    {/* 在庫管理エリア */}
-                    <div className="w-full md:w-auto bg-stone-50 p-4 rounded-xl border border-stone-200 flex flex-col sm:flex-row items-center gap-4">
-                      <div className="flex flex-col items-start gap-1 w-full sm:w-auto">
-                        <label className="text-[10px] font-bold text-stone-400 uppercase tracking-wider">
-                          補充・変更後の在庫数
-                        </label>
-                        <div className="flex items-center gap-1 w-full sm:w-auto">
-                          {/* クイック増減ボタン */}
-                          <button
-                            onClick={() => adjustStock(product.id, -1)}
-                            className="w-8 h-8 rounded bg-white border border-stone-300 flex items-center justify-center font-bold text-stone-600 hover:bg-stone-100 active:scale-95 transition-all"
-                            title="-1点"
-                          >
-                            -
-                          </button>
-                          
-                          {/* 直接入力 */}
-                          <input
-                            type="number"
-                            min="0"
-                            value={currentEdit}
-                            onChange={(e) => handleInputChange(product.id, e.target.value)}
-                            className="w-16 h-8 border border-stone-300 rounded text-center font-bold text-stone-800 bg-white focus:outline-none focus:border-stone-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          />
-                          
-                          <button
-                            onClick={() => adjustStock(product.id, 1)}
-                            className="w-8 h-8 rounded bg-white border border-stone-300 flex items-center justify-center font-bold text-stone-600 hover:bg-stone-100 active:scale-95 transition-all"
-                            title="+1点"
-                          >
-                            +
-                          </button>
-                          
-                          <button
-                            onClick={() => adjustStock(product.id, 5)}
-                            className="px-1.5 h-8 rounded bg-white border border-stone-300 flex items-center justify-center font-bold text-xs text-stone-600 hover:bg-stone-100 active:scale-95 transition-all"
-                            title="+5点"
-                          >
-                            +5
-                          </button>
+                    {/* 価格 */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-bold text-stone-500">価格 (円)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="例：2500"
+                        value={newProductPrice}
+                        onChange={(e) => setNewProductPrice(e.target.value === "" ? "" : Number(e.target.value))}
+                        required
+                        className="border border-stone-300 rounded-lg px-3 py-2 text-stone-800 bg-white focus:outline-none focus:border-stone-500 text-sm"
+                      />
+                    </div>
 
-                          <button
-                            onClick={() => adjustStock(product.id, 10)}
-                            className="px-1.5 h-8 rounded bg-white border border-stone-300 flex items-center justify-center font-bold text-xs text-stone-600 hover:bg-stone-100 active:scale-95 transition-all"
-                            title="+10点"
-                          >
-                            +10
-                          </button>
+                    {/* 初期在庫数 */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-bold text-stone-500">初期在庫数</label>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="例：15"
+                        value={newProductStock}
+                        onChange={(e) => setNewProductStock(e.target.value === "" ? "" : Number(e.target.value))}
+                        required
+                        className="border border-stone-300 rounded-lg px-3 py-2 text-stone-800 bg-white focus:outline-none focus:border-stone-500 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="submit"
+                      disabled={isRegistering}
+                      className="bg-stone-800 hover:bg-stone-700 text-white font-bold px-6 py-2.5 rounded-lg text-sm transition-all duration-200 active:scale-95 flex items-center gap-1.5 shadow-sm"
+                    >
+                      {isRegistering ? (
+                        <>
+                          <span className="animate-spin text-xs">🌀</span>
+                          <span>登録処理中...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>➕</span>
+                          <span>新規商品を登録する</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+
+            {/* 商品棚の一覧 */}
+            <div className="space-y-4">
+              <h2 className="text-lg font-bold text-stone-500 tracking-wider pl-1">
+                📦 現在の商品棚・在庫一覧
+              </h2>
+
+              <div className="grid grid-cols-1 gap-4">
+                {products.map((product) => {
+                  const currentEdit =
+                    stockEdits[product.id] !== undefined
+                      ? stockEdits[product.id]
+                      : product.stock;
+                  const isModified = currentEdit !== product.stock;
+
+                  return (
+                    <div
+                      key={product.id}
+                      className="bg-white p-6 rounded-xl shadow-sm border border-stone-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 transition-all hover:shadow-md"
+                    >
+                      {/* 商品情報 */}
+                      <div className="space-y-1">
+                        <span className="text-xs text-stone-400 font-bold tracking-wider uppercase">
+                          商品ID: #{product.id}
+                        </span>
+                        <h2 className="text-2xl font-bold text-stone-800">
+                          {product.name}
+                        </h2>
+                        <div className="flex items-center gap-4 text-stone-600 mt-2">
+                          <span className="text-lg font-bold">¥{product.price.toLocaleString()}</span>
+                          <span className="text-xs bg-stone-100 px-2.5 py-1 rounded text-stone-500 font-bold">
+                            現在の在庫: {product.stock} 点
+                          </span>
                         </div>
                       </div>
 
-                      {/* 更新・保存ボタン */}
-                      <button
-                        onClick={() => saveStockUpdate(product.id, product.name)}
-                        disabled={updatingProductId !== null || !isModified}
-                        className={`w-full sm:w-auto px-5 py-2.5 rounded-lg font-bold text-sm transition-all duration-200 flex items-center justify-center gap-1 active:scale-95 shadow-sm ${
-                          isModified
-                            ? "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
-                            : "bg-stone-200 text-stone-400 cursor-not-allowed"
-                        }`}
-                      >
-                        {updatingProductId === product.id ? (
-                          <>
-                            <span className="animate-spin text-xs">🌀</span>
-                            <span>更新中...</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>💾</span>
-                            <span>台帳更新</span>
-                          </>
-                        )}
-                      </button>
+                      {/* 在庫管理エリア */}
+                      <div className="w-full md:w-auto bg-stone-50 p-4 rounded-xl border border-stone-200 flex flex-col sm:flex-row items-center gap-4">
+                        <div className="flex flex-col items-start gap-1 w-full sm:w-auto">
+                          <label className="text-[10px] font-bold text-stone-400 uppercase tracking-wider">
+                            補充・変更後の在庫数
+                          </label>
+                          <div className="flex items-center gap-1 w-full sm:w-auto">
+                            {/* クイック増減ボタン */}
+                            <button
+                              onClick={() => adjustStock(product.id, -1)}
+                              className="w-8 h-8 rounded bg-white border border-stone-300 flex items-center justify-center font-bold text-stone-600 hover:bg-stone-100 active:scale-95 transition-all"
+                              title="-1点"
+                            >
+                              -
+                            </button>
+                            
+                            {/* 直接入力 */}
+                            <input
+                              type="number"
+                              min="0"
+                              value={currentEdit}
+                              onChange={(e) => handleInputChange(product.id, e.target.value)}
+                              className="w-16 h-8 border border-stone-300 rounded text-center font-bold text-stone-800 bg-white focus:outline-none focus:border-stone-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                            
+                            <button
+                              onClick={() => adjustStock(product.id, 1)}
+                              className="w-8 h-8 rounded bg-white border border-stone-300 flex items-center justify-center font-bold text-stone-600 hover:bg-stone-100 active:scale-95 transition-all"
+                              title="+1点"
+                            >
+                              +
+                            </button>
+                            
+                            <button
+                              onClick={() => adjustStock(product.id, 5)}
+                              className="px-1.5 h-8 rounded bg-white border border-stone-300 flex items-center justify-center font-bold text-xs text-stone-600 hover:bg-stone-100 active:scale-95 transition-all"
+                              title="+5点"
+                            >
+                              +5
+                            </button>
+
+                            <button
+                              onClick={() => adjustStock(product.id, 10)}
+                              className="px-1.5 h-8 rounded bg-white border border-stone-300 flex items-center justify-center font-bold text-xs text-stone-600 hover:bg-stone-100 active:scale-95 transition-all"
+                              title="+10点"
+                            >
+                              +10
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 更新・保存ボタン */}
+                        <button
+                          onClick={() => saveStockUpdate(product.id, product.name)}
+                          disabled={updatingProductId !== null || !isModified}
+                          className={`w-full sm:w-auto px-5 py-2.5 rounded-lg font-bold text-sm transition-all duration-200 flex items-center justify-center gap-1 active:scale-95 shadow-sm ${
+                            isModified
+                              ? "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                              : "bg-stone-200 text-stone-400 cursor-not-allowed"
+                          }`}
+                        >
+                          {updatingProductId === product.id ? (
+                            <>
+                              <span className="animate-spin text-xs">🌀</span>
+                              <span>更新中...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>💾</span>
+                              <span>台帳更新</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
 
             {/* 商品がない場合の空表示 */}
@@ -341,7 +482,7 @@ export default function AdminConsole() {
                 <p className="text-lg">現在、棚に商品は並んでいません。</p>
               </div>
             )}
-          </>
+          </div>
         )}
       </div>
     </main>
