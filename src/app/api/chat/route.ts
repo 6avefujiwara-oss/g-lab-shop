@@ -23,25 +23,34 @@ async function checkInventory() {
 }
 
 // 注文処理ツール
-async function placeOrder(productId: number, quantity: number) {
-  console.log(`注文処理呼び出し: ID=${productId}, 数量=${quantity}`);
+async function placeOrder(productName: string, quantity: number) {
+  console.log(`注文処理呼び出し: 商品名=${productName}, 数量=${quantity}`);
 
   try {
-    // 1. 在庫確認
-    const { data: product, error: fetchError } = await supabase
+    // 1. 全商品を取得して名前でマッチング
+    const { data: products, error: fetchError } = await supabase
       .from('products')
-      .select('stock, name')
-      .eq('id', productId)
-      .single();
+      .select('*');
 
-    if (fetchError || !product) return "商品の特定に失敗しました。";
-    if (product.stock < quantity) return `在庫不足です（現在庫: ${product.stock}）。`;
+    if (fetchError || !products) return "商品の特定に失敗しました。";
+
+    const product = products.find(p => {
+      const dbName = p.name.toLowerCase();
+      const inputName = productName.toLowerCase();
+      return dbName.includes(inputName) || inputName.includes(dbName) ||
+             (p.name === 'Hinomaru Cap' && (inputName.includes('cap') || inputName.includes('キャップ') || inputName.includes('日の丸'))) ||
+             (p.name === 'Sensu' && (inputName.includes('sensu') || inputName.includes('扇子') || inputName.includes('せんす'))) ||
+             (p.name === 'Neko Samurai Tシャツ' && (inputName.includes('tシャツ') || inputName.includes('t-shirt') || inputName.includes('猫') || inputName.includes('侍')));
+    });
+
+    if (!product) return `商品「${productName}」の特定に失敗しました。`;
+    if (product.stock < quantity) return `在庫不足です。現在この商品はご提供できません。`;
 
     // 2. 在庫減算
     const { error: updateError } = await supabase
       .from('products')
       .update({ stock: product.stock - quantity })
-      .eq('id', productId);
+      .eq('id', product.id);
 
     if (updateError) throw updateError;
 
@@ -70,14 +79,14 @@ const storeTools: Tool[] = [
       },
       {
         name: "placeOrder",
-        description: "指定されたIDの商品を注文（購入確定）します。在庫を実際に減らします。必ず注文の最終確認後に行ってください。",
+        description: "指定された名前の商品を注文（購入確定）します。在庫を実際に減らします。必ず注文の最終確認後に行ってください。",
         parameters: {
           type: SchemaType.OBJECT,
           properties: {
-            productId: { type: SchemaType.NUMBER, description: "注文する商品のID" },
+            productName: { type: SchemaType.STRING, description: "注文する商品の正式名称（例：'Hinomaru Cap'）" },
             quantity: { type: SchemaType.NUMBER, description: "注文個数" }
           },
-          required: ["productId", "quantity"]
+          required: ["productName", "quantity"]
         }
       }
     ],
@@ -94,23 +103,24 @@ const SYSTEM_PROMPT = `
 3. 無関係な文脈（例：葵祭の解説、道案内など）でツールを呼び出すことは禁止です。
 
 【スマート接客ガイドライン】
-1. 商品紹介時のルール（重要）:
-   「checkInventory」で取得した商品情報をお客様に提示する際は、必ず各商品の「商品名」の横にデータベースの「ID」を明記してください。
-   例：「日の丸キャップ (ID: 2) 2,000円 (在庫20点)」
-   ※履歴に商品IDを残すことで、購入確定時にシステムが正確に注文を処理するために極めて重要です。
+1. 商品紹介時のルール（最重要・顧客への非表示ルール）:
+   - **お客様に対して、データベースの「商品ID」や「具体的な在庫数」は絶対に提示しないでください。**
+   - 商品の一覧や詳細を案内する際は、商品名と価格、および在庫の有無（「在庫あり」または「残りわずか」など）のみを親しみやすく提示してください。
+     例：「日の丸キャップ (Hinomaru Cap)：2,000円（在庫あり）」
+     ※お客様にIDや在庫数を意識させない、上質なおもてなしの接客を行ってください。
 
 2. 金額の計算と提示（最終確認）:
    購入希望の言及があった際は、ツールを実行する前に必ず以下の情報を分かりやすく提示し、購入の最終確認を行ってください。
-   - 商品の正式名称（およびID）
+   - 商品の正式名称
    - 単価（1点あたりの価格）
    - ご希望の数量
    - 合計金額（単価 × 数量）
-   例：「『日の丸キャップ (ID: 2)』は1点 2,000円でございます。1点ですと合計で 2,000円となりますが、こちらで注文を確定（購入確定）してよろしいでしょうか？」
+   例：「『日の丸キャップ』は1点 2,000円でございます。1点ですと合計で 2,000円となりますが、こちらで注文を確定（購入確定）してよろしいでしょうか？」
 
 3. 接客フローとツール実行のタイミング:
-   - ステップ1: 商品の問い合わせ時に「checkInventory」でID、名称、価格、在庫を確認し、ID付きで提示する。
-   - ステップ2: 購入希望時は、上記のIDと金額計算を含めた最終確認（「〜で確定してよろしいでしょうか？」）を行う。
-   - ステップ3: お客様から承諾（例：「はい」「確定してください」「お願いします」「買います」など）が得られたら、**即座に「placeOrder」を実行する**。この際、会話履歴から該当商品の「ID（productId）」と「数量（quantity）」を正確に特定して渡してください。
+   - ステップ1: 商品の問い合わせ時に「checkInventory」を実行し、内部で在庫状況を確認した上で、上記の非表示ルールに従って商品名と価格のみを提示する。
+   - ステップ2: 購入希望時は、金額計算を含めた最終確認（「〜で確定してよろしいでしょうか？」）を行う。
+   - ステップ3: お客様から承諾（例：「はい」「確定してください」「お願いします」「買います」など）が得られたら、**即座に「placeOrder」を実行する**。この際、\`productName\` 引数には該当商品の正式名称（\`Hinomaru Cap\`, \`Sensu\`, \`Neko Samurai Tシャツ\`）を、\`quantity\` には注文個数を指定して呼び出してください。
 
 4. キャラクター:
    - 常に丁寧で「おもてなし」の心を忘れない。
@@ -156,8 +166,8 @@ export async function POST(req: Request) {
           // response にはパース済みオブジェクトを渡す（文字列はNG）
           functionResponses.push({ functionResponse: { name: "checkInventory", response: { products: data } } });
         } else if (call.name === "placeOrder") {
-          const { productId, quantity } = call.args as { productId: number; quantity: number };
-          const data = await placeOrder(productId, quantity);
+          const { productName, quantity } = call.args as { productName: string; quantity: number };
+          const data = await placeOrder(productName, quantity);
           functionResponses.push({ functionResponse: { name: "placeOrder", response: { result: data } } });
         }
       }
