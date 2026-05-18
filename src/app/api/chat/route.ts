@@ -124,7 +124,6 @@ const SYSTEM_PROMPT = `
 
 4. キャラクター:
    - 常に丁寧で「おもてなし」の心を忘れない。
-   - 最後は必ず『京都の風情を大切に。AI屋 G-LAB 店主より』で締める。
 `;
 
 export async function POST(req: Request) {
